@@ -1,3 +1,0 @@
-/mnt/c/Users/szymo/OneDrive/Dokumenty/GitHub/cp-restaurant/cmake-build-debug/CMakeFiles/rebuild_cache.dir
-/mnt/c/Users/szymo/OneDrive/Dokumenty/GitHub/cp-restaurant/cmake-build-debug/CMakeFiles/edit_cache.dir
-/mnt/c/Users/szymo/OneDrive/Dokumenty/GitHub/cp-restaurant/cmake-build-debug/CMakeFiles/cp_restaurant.dir
