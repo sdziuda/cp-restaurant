@@ -1,0 +1,1 @@
+/usr/bin/c++  -g   -pthread CMakeFiles/cp_restaurant.dir/system.cpp.o CMakeFiles/cp_restaurant.dir/demo.cpp.o  -o cp_restaurant 
