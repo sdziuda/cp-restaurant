@@ -6,6 +6,8 @@
 #include <unordered_map>
 #include <functional>
 #include <future>
+#include <queue>
+#include <map>
 
 #include "machine.hpp"
 
@@ -54,9 +56,16 @@ public:
 
     [[nodiscard]] bool isReady() const;
 
-protected:
+    [[nodiscard]] bool isFailed() const;
+
+    void setReady(bool val);
+
+    void setFailed(bool val);
+
+private:
     unsigned int orderId;
     bool ready;
+    bool failed;
 };
 
 class System
@@ -79,21 +88,31 @@ public:
     unsigned int getClientTimeout() const;
 
 private:
-    friend class CoasterPager;
     machines_t machines;
     unsigned int numberOfWorkers;
     unsigned int clientTimeout;
+
     std::vector<std::string> menu;
-    std::vector<unsigned int> pendingOrders;
+    std::map<unsigned int, std::unique_ptr<CoasterPager>> pagers;
+    std::map<unsigned int, std::vector<std::string>> orders;
+    std::map<unsigned int, std::vector<std::unique_ptr<Product>>> ordersMade;
+    std::map<unsigned int, bool> orderCollected;
+    std::vector<unsigned int> abandonedOrdersId;
+    std::queue<unsigned int> ordersQueue;
     unsigned int nextOrderId;
+
     std::vector<std::thread> workers;
-    unsigned int workingWorkers;
+    std::vector<WorkerReport> reports;
+    unsigned int workersStarted;
+    unsigned int occupiedWorkers;
+
     bool running;
+
     std::mutex mutex;
     std::condition_variable queue_to_restaurant;
+    std::condition_variable queue_for_workers;
 
     void worker();
-
 };
 
 #endif // SYSTEM_HPP

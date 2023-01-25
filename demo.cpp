@@ -143,6 +143,7 @@ int main() {
         10,
         1
     };
+    std::cout<<"System started\n";
 
     auto client1 = std::thread([&system]() {
         system.getMenu();
