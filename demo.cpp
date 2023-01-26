@@ -170,6 +170,7 @@ int main() {
     client2.join();
 
     system.shutdown();
+    std::cout<<"System shutdown\n";
 
     auto client3 = std::thread([&system](){
         system.getMenu();

@@ -62,10 +62,13 @@ public:
 
     void setFailed(bool val);
 
+    mutable std::condition_variable cond;
+
 private:
     unsigned int orderId;
     bool ready;
     bool failed;
+    mutable std::mutex waiter;
 };
 
 class System
@@ -111,6 +114,7 @@ private:
     std::mutex mutex;
     std::condition_variable queue_to_restaurant;
     std::condition_variable queue_for_workers;
+    std::map<unsigned int, std::condition_variable> queue_for_pagers;
 
     void worker();
 };

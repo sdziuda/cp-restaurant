@@ -13,9 +13,7 @@ CoasterPager::CoasterPager(unsigned int orderId) {
 }
 
 void CoasterPager::wait() const {
-    std::mutex waiter;
-    std::unique_lock<std::mutex> lock(waiter);
-    std::condition_variable cond;
+    std::unique_lock<std::mutex> lock(this->waiter);
 
     cond.wait(lock, [this]() { return this->ready || this->failed; });
 
@@ -25,9 +23,7 @@ void CoasterPager::wait() const {
 }
 
 void CoasterPager::wait(unsigned int timeout) const {
-    std::mutex waiter;
-    std::unique_lock<std::mutex> lock(waiter);
-    std::condition_variable cond;
+    std::unique_lock<std::mutex> lock(this->waiter);
 
     cond.wait_for(lock, std::chrono::milliseconds(timeout), [this]() { return this->ready || this->failed; });
 
@@ -89,17 +85,23 @@ System::System(System::machines_t machines, unsigned int numberOfWorkers,
 std::vector<WorkerReport> System::shutdown() {
     std::unique_lock<std::mutex> lock(this->mutex);
 
+    cout << "shutdown initiated" << endl;
+
     this->running = false;
     this->queue_to_restaurant.notify_all();
-
-    for (auto &worker: this->workers) {
-        worker.join();
-    }
+    this->queue_for_workers.notify_all();
+    cout << "workers notified" << endl;
 
     std::vector<WorkerReport> res = this->reports;
 
     for (auto &machine: this->machines) {
         machine.second->stop();
+    }
+
+    for (auto &worker: this->workers) {
+        // wait for workers to finish
+        worker.join();
+        cout << "worker joined" << endl;
     }
 
     return res;
@@ -173,6 +175,7 @@ std::vector<std::unique_ptr<Product>> System::collectOrder(std::unique_ptr<Coast
 
     this->orderCollected[orderId] = true;
     auto res = std::move(this->ordersMade[orderId]);
+    this->queue_for_pagers[orderId].notify_one();
 
     lock.unlock();
 
@@ -188,6 +191,7 @@ void System::worker() {
     std::vector<std::vector<std::string>> abandonedOrders;
     std::vector<std::vector<std::string>> failedOrders;
     std::vector<std::string> failedProducts;
+    int cycle = 0;
 
     std::unique_lock<std::mutex> lock(this->mutex);
     this->workersStarted++;
@@ -202,7 +206,11 @@ void System::worker() {
 
     while (true) {
         lock.lock();
-        this->queue_for_workers.wait(lock, [this]() {
+        cout << "worker(" << id << "): waiting for orders, cycle: " << cycle << endl;
+        this->queue_for_workers.wait(lock, [id, this]() {
+            std::string runningStr = this->running ? "yes" : "no";
+            std::string emptyStr = this->ordersQueue.empty() ? "yes" : "no";
+            cout << "worker(" << id << "): running? " << runningStr << " queue empty? " << emptyStr << endl;
             return !this->ordersQueue.empty() || !this->running;
         });
 
@@ -212,6 +220,8 @@ void System::worker() {
             this->reports.push_back(report);
             lock.unlock();
             break;
+        } else {
+            cout << "worker(" << id << "): got order" << endl;
         }
 
         auto orderId = this->ordersQueue.front();
@@ -224,19 +234,21 @@ void System::worker() {
         std::vector<std::unique_ptr<Product>> products;
         for (auto &product: order) {
             try {
-                lock.lock();
-                cout << "worker(" << id << "): order: " << orderId << " wanna get " << product << endl;
+                // possibly lock for each machine here
+//                lock.lock();
+//                cout << "worker(" << id << "): order: " << orderId << " wanna get " << product << endl;
                 products.push_back(this->machines[product]->getProduct());
-                cout << "worker(" << id << "): order: " << orderId << " got " << product << endl;
-                lock.unlock();
+//                cout << "worker(" << id << "): order: " << orderId << " got " << product << endl;
+//                lock.unlock();
             } catch (MachineFailure &e) {
                 failedProducts.push_back(product);
                 failedOrders.push_back(order);
 
-                // lock.lock()
+                lock.lock();
                 cout << "worker(" << id << "): order: " << orderId << " failed for " << product << endl;
                 this->pagers[orderId]->setFailed(true);
-                // notify the pager - how? or maybe later?
+                // notify the pager - or maybe later?
+                this->pagers[orderId]->cond.notify_one();
 
                 this->orders.erase(orderId);
                 this->pagers.erase(orderId);
@@ -268,13 +280,15 @@ void System::worker() {
             this->pagers[orderId]->setReady(true);
             cout << "worker(" << id << "): order: " << orderId << " ready to be collected" << endl;
             // notify the pager - how?
+            this->pagers[orderId]->cond.notify_one();
 
-            std::condition_variable cond;
-            cond.wait_for(lock, std::chrono::milliseconds(this->clientTimeout), [this, orderId]() {
+            this->queue_for_pagers[orderId].wait_for(lock, std::chrono::milliseconds(this->clientTimeout), [this, orderId]() {
                 return this->orderCollected[orderId];
             });
 
+
             if (!this->orderCollected[orderId]) {
+                cout << "worker(" << id << "): order: " << orderId << " expired" << endl;
                 abandonedOrders.push_back(order);
                 this->abandonedOrdersId.push_back(orderId);
                 products = std::move(this->ordersMade[orderId]);
@@ -290,6 +304,7 @@ void System::worker() {
                     }
                 }
             } else {
+                cout << "worker(" << id << "): order: " << orderId << " collected" << endl;
                 collectedOrders.push_back(order);
             }
 
@@ -302,6 +317,8 @@ void System::worker() {
         }
         this->occupiedWorkers--;
         this->queue_to_restaurant.notify_one();
+        cout << "worker(" << id << "): order: " << orderId << " finished" << endl;
+        cycle++;
         lock.unlock();
     }
 }
