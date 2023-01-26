@@ -169,8 +169,36 @@ int main() {
     client1.join();
     client2.join();
 
-    system.shutdown();
+    auto r = system.shutdown();
     std::cout<<"System shutdown\n";
+    for (auto& p : r) {
+        std::cout << "Collected:\n";
+        for (auto& o: p.collectedOrders) {
+            for (auto& i : o) {
+                std::cout << i<< " ";
+            }
+            std::cout << "\n";
+        }
+        std::cout << "Abandoned:\n";
+        for (auto& o: p.abandonedOrders) {
+            for (auto& i : o) {
+                std::cout << i<< " ";
+            }
+            std::cout << "\n";
+        }
+        std::cout << "Failed:\n";
+        for (auto& o: p.failedOrders) {
+            for (auto& i : o) {
+                std::cout << i<< " ";
+            }
+            std::cout << "\n";
+        }
+        std::cout << "Failed prods:\n";
+        for (auto& o: p.failedProducts) {
+            std::cout << o << " ";
+        }
+        std::cout << "\n";
+    }
 
     auto client3 = std::thread([&system](){
         system.getMenu();

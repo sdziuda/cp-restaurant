@@ -115,6 +115,7 @@ private:
     std::condition_variable queue_to_restaurant;
     std::condition_variable queue_for_workers;
     std::map<unsigned int, std::condition_variable> queue_for_pagers;
+    std::condition_variable queue_for_reports;
 
     void worker();
 };
