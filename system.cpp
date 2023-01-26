@@ -64,7 +64,7 @@ System::System(System::machines_t machines, unsigned int numberOfWorkers,
     for (auto &machine: this->machines) {
         this->menu.push_back(machine.first);
     }
-    this->pagers = std::map<unsigned int, std::unique_ptr<CoasterPager>>();
+    this->pagers = std::map<unsigned int, CoasterPager*>();
     this->orders = std::map<unsigned int, std::vector<std::string>>();
     this->ordersMade = std::map<unsigned int, std::vector<std::unique_ptr<Product>>>();
     this->orderCollected = std::map<unsigned int, bool>();
@@ -138,16 +138,16 @@ std::unique_ptr<CoasterPager> System::order(std::vector<std::string> products) {
         auto orderId = this->nextOrderId++;
         this->orders.insert({orderId, products});
         this->ordersQueue.push(orderId);
-        this->pagers.insert({orderId, std::make_unique<CoasterPager>(orderId)});
-        auto pager = std::move(this->pagers[orderId]);
+        auto pager = std::make_unique<CoasterPager>(orderId);
+        auto copy = pager.get();
+        this->pagers.insert({orderId, copy});
+        this->queue_for_workers.notify_one();
 
         cout << "order: " << orderId << " ";
         for (auto &product: products) {
             cout << product << " ";
         }
-        cout << "-> pager: " << pager->getId() << endl;
-
-        lock.unlock();
+        cout << "-> pager: " << this->pagers[orderId]->getId() << endl;
 
         return pager;
     } else {
@@ -218,23 +218,26 @@ void System::worker() {
         auto order = this->orders[orderId];
         this->ordersQueue.pop();
         this->occupiedWorkers++;
-        cout << "worker(" << id << "): order: " << orderId << " ";
-        for (auto &product: order) {
-            cout << product << " ";
-        }
-        cout << endl;
+        cout << "worker(" << id << "): order: " << orderId << "\n";
         lock.unlock();
 
         std::vector<std::unique_ptr<Product>> products;
         for (auto &product: order) {
             try {
+                lock.lock();
+                cout << "worker(" << id << "): order: " << orderId << " wanna get " << product << endl;
                 products.push_back(this->machines[product]->getProduct());
+                cout << "worker(" << id << "): order: " << orderId << " got " << product << endl;
+                lock.unlock();
             } catch (MachineFailure &e) {
                 failedProducts.push_back(product);
                 failedOrders.push_back(order);
 
-                lock.lock();
+                // lock.lock()
+                cout << "worker(" << id << "): order: " << orderId << " failed for " << product << endl;
                 this->pagers[orderId]->setFailed(true);
+                // notify the pager - how? or maybe later?
+
                 this->orders.erase(orderId);
                 this->pagers.erase(orderId);
                 auto it = std::find(this->menu.begin(), this->menu.end(), product);
@@ -263,6 +266,8 @@ void System::worker() {
             this->orderCollected.insert({orderId, false});
             this->ordersMade.insert({orderId, std::move(products)});
             this->pagers[orderId]->setReady(true);
+            cout << "worker(" << id << "): order: " << orderId << " ready to be collected" << endl;
+            // notify the pager - how?
 
             std::condition_variable cond;
             cond.wait_for(lock, std::chrono::milliseconds(this->clientTimeout), [this, orderId]() {
@@ -291,8 +296,12 @@ void System::worker() {
             this->orderCollected.erase(orderId);
             this->pagers.erase(orderId);
             this->orders.erase(orderId);
+        } else {
+            cout << "worker(" << id << "): order: " << orderId << " failed" << endl;
+            // eventually notify the pager
         }
         this->occupiedWorkers--;
+        this->queue_to_restaurant.notify_one();
         lock.unlock();
     }
 }

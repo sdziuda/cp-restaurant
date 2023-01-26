@@ -93,7 +93,7 @@ private:
     unsigned int clientTimeout;
 
     std::vector<std::string> menu;
-    std::map<unsigned int, std::unique_ptr<CoasterPager>> pagers;
+    std::map<unsigned int, CoasterPager*> pagers;
     std::map<unsigned int, std::vector<std::string>> orders;
     std::map<unsigned int, std::vector<std::unique_ptr<Product>>> ordersMade;
     std::map<unsigned int, bool> orderCollected;
