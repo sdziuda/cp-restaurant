@@ -208,7 +208,6 @@ void System::worker() {
     std::vector<std::vector<std::string>> abandonedOrders;
     std::vector<std::vector<std::string>> failedOrders;
     std::vector<std::string> failedProducts;
-    int cycle = 0;
 
     std::unique_lock<std::mutex> lock(this->mutex);
     this->workersStarted++;
@@ -223,7 +222,7 @@ void System::worker() {
 
     while (true) {
         lock.lock();
-        this->queue_for_workers.wait(lock, [id, this]() {
+        this->queue_for_workers.wait(lock, [this]() {
             return !this->ordersQueue.empty() || !this->running;
         });
 
@@ -330,7 +329,6 @@ void System::worker() {
         this->occupiedWorkers--;
         this->queue_to_restaurant.notify_one();
         cout << "worker(" << id << "): order: " << orderId << " finished" << endl;
-        cycle++;
         lock.unlock();
     }
 }
