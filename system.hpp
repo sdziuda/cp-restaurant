@@ -46,8 +46,6 @@ struct WorkerReport
 class CoasterPager
 {
 public:
-    explicit CoasterPager(unsigned int orderId);
-
     void wait() const;
 
     void wait(unsigned int timeout) const;
@@ -56,19 +54,15 @@ public:
 
     [[nodiscard]] bool isReady() const;
 
-    [[nodiscard]] bool isFailed() const;
-
-    void setReady(bool val);
-
-    void setFailed(bool val);
-
-    mutable std::condition_variable cond;
-
 private:
-    unsigned int orderId;
-    bool ready;
-    bool failed;
+    friend class System;
+
+    static unsigned int nextId;
+    unsigned int orderId = nextId++;
+    bool ready = false;
+    bool failed = false;
     mutable std::mutex waiter;
+    mutable std::condition_variable cond;
 };
 
 class System
@@ -96,10 +90,10 @@ private:
     unsigned int clientTimeout;
 
     std::vector<std::string> menu;
-    std::map<unsigned int, CoasterPager*> pagers;
-    std::map<unsigned int, std::vector<std::string>> orders;
-    std::map<unsigned int, std::vector<std::unique_ptr<Product>>> ordersMade;
-    std::map<unsigned int, bool> orderCollected;
+    std::unordered_map<unsigned int, CoasterPager*> pagers;
+    std::unordered_map<unsigned int, std::vector<std::string>> orders;
+    std::unordered_map<unsigned int, std::vector<std::unique_ptr<Product>>> ordersMade;
+    std::unordered_map<unsigned int, bool> orderCollected;
     std::vector<unsigned int> abandonedOrdersId;
     std::queue<unsigned int> ordersQueue;
     unsigned int nextOrderId;
@@ -116,6 +110,7 @@ private:
     std::condition_variable queue_for_workers;
     std::map<unsigned int, std::condition_variable> queue_for_pagers;
     std::condition_variable queue_for_reports;
+    std::condition_variable all_workers_started;
 
     void worker();
 };
