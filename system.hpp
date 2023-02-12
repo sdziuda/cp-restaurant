@@ -44,6 +44,7 @@ struct WorkerReport
 };
 
 struct Pager_variables {
+    unsigned int id;
     std::mutex waiter;
     std::condition_variable cond;
     bool ready = false;
@@ -64,8 +65,6 @@ public:
 private:
     friend class System;
 
-    static unsigned int nextId;
-    unsigned int orderId = nextId++;
     std::shared_ptr<Pager_variables> vars = std::make_shared<Pager_variables>();
 };
 
@@ -116,6 +115,7 @@ private:
     std::condition_variable wait_to_restaurant;
     std::condition_variable queue_for_workers;
     std::map<unsigned int, std::condition_variable> queue_for_pagers;
+    std::map<std::string, std::shared_ptr<std::mutex>> mutex_for_machines;
     std::condition_variable queue_for_reports;
     std::condition_variable all_workers_started;
 
