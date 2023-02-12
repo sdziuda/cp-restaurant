@@ -43,6 +43,13 @@ struct WorkerReport
     std::vector<std::string> failedProducts;
 };
 
+struct Pager_variables {
+    std::mutex waiter;
+    std::condition_variable cond;
+    bool ready = false;
+    bool failed = false;
+};
+
 class CoasterPager
 {
 public:
@@ -59,10 +66,7 @@ private:
 
     static unsigned int nextId;
     unsigned int orderId = nextId++;
-    bool ready = false;
-    bool failed = false;
-    mutable std::mutex waiter;
-    mutable std::condition_variable cond;
+    std::shared_ptr<Pager_variables> vars = std::make_shared<Pager_variables>();
 };
 
 class System
@@ -90,8 +94,9 @@ private:
     unsigned int clientTimeout;
 
     std::vector<std::string> menu;
-    std::unordered_map<unsigned int, CoasterPager*> pagers;
+    std::unordered_map<unsigned int, std::shared_ptr<Pager_variables>> pagers;
     std::unordered_map<unsigned int, std::vector<std::string>> orders;
+    std::vector<unsigned int> pendingOrders;
     std::unordered_map<unsigned int, std::vector<std::unique_ptr<Product>>> ordersMade;
     std::unordered_map<unsigned int, bool> orderCollected;
     std::vector<unsigned int> abandonedOrdersId;
@@ -105,8 +110,10 @@ private:
 
     bool running;
 
-    std::mutex mutex;
-    std::condition_variable queue_to_restaurant;
+    std::priority_queue<unsigned int, std::vector<unsigned int>, std::greater<>> queue_for_orders;
+
+    mutable std::mutex mutex;
+    std::condition_variable wait_to_restaurant;
     std::condition_variable queue_for_workers;
     std::map<unsigned int, std::condition_variable> queue_for_pagers;
     std::condition_variable queue_for_reports;

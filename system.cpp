@@ -6,24 +6,31 @@
 
 using namespace std;
 
+const bool debug = false;
+
 unsigned int CoasterPager::nextId = 0;
 
 void CoasterPager::wait() const {
-    std::unique_lock<std::mutex> lock(this->waiter);
+    std::unique_lock<std::mutex> lock(this->vars->waiter);
 
-    cond.wait(lock, [this]() { return this->ready || this->failed; });
+    if (!this->vars->ready && !this->vars->failed) {
+        vars->cond.wait(lock, [this]() { return this->vars->ready || this->vars->failed; });
+    }
 
-    if (this->failed) {
+    if (this->vars->failed) {
         throw FulfillmentFailure();
     }
 }
 
 void CoasterPager::wait(unsigned int timeout) const {
-    std::unique_lock<std::mutex> lock(this->waiter);
+    std::unique_lock<std::mutex> lock(this->vars->waiter);
 
-    cond.wait_for(lock, std::chrono::milliseconds(timeout), [this]() { return this->ready || this->failed; });
+    if (!this->vars->ready && !this->vars->failed) {
+        vars->cond.wait_for(lock, std::chrono::milliseconds(timeout),
+                      [this]() { return this->vars->ready || this->vars->failed; });
+    }
 
-    if (this->failed) {
+    if (this->vars->failed) {
         throw FulfillmentFailure();
     }
 }
@@ -33,7 +40,7 @@ unsigned int CoasterPager::getId() const {
 }
 
 bool CoasterPager::isReady() const {
-    return this->ready;
+    return this->vars->ready;
 }
 
 System::System(System::machines_t machines, unsigned int numberOfWorkers,
@@ -44,8 +51,9 @@ System::System(System::machines_t machines, unsigned int numberOfWorkers,
     for (auto &machine: this->machines) {
         this->menu.push_back(machine.first);
     }
-    this->pagers = std::unordered_map<unsigned int, CoasterPager*>();
+    this->pagers = std::unordered_map<unsigned int, std::shared_ptr<Pager_variables>>();
     this->orders = std::unordered_map<unsigned int, std::vector<std::string>>();
+    this->pendingOrders = std::vector<unsigned int>();
     this->ordersMade = std::unordered_map<unsigned int, std::vector<std::unique_ptr<Product>>>();
     this->orderCollected = std::unordered_map<unsigned int, bool>();
     this->abandonedOrdersId = std::vector<unsigned int>();
@@ -69,10 +77,10 @@ System::System(System::machines_t machines, unsigned int numberOfWorkers,
 std::vector<WorkerReport> System::shutdown() {
     std::unique_lock<std::mutex> lock(this->mutex);
 
-    cout << "shutdown initiated" << endl;
+    if (debug) cout << "shutdown initiated" << endl;
 
     this->running = false;
-    this->queue_to_restaurant.notify_all();
+    this->wait_to_restaurant.notify_all();
     this->queue_for_workers.notify_all();
     this->queue_for_reports.wait(lock , [this]() { return this->reports.size() == this->numberOfWorkers; });
 
@@ -88,6 +96,7 @@ std::vector<WorkerReport> System::shutdown() {
     menu.clear();
     pagers.clear();
     orders.clear();
+    pendingOrders.clear();
     ordersMade.clear();
     orderCollected.clear();
     abandonedOrdersId.clear();
@@ -107,49 +116,57 @@ std::vector<std::string> System::getMenu() const {
 }
 
 std::vector<unsigned int> System::getPendingOrders() const {
-    std::vector<unsigned int> currOrders;
-    for (auto &pager: this->pagers) {
-        currOrders.emplace_back(pager.first);
-    }
-    return currOrders;
+    return pendingOrders;
 }
 
 std::unique_ptr<CoasterPager> System::order(std::vector<std::string> products) {
     std::unique_lock<std::mutex> lock(this->mutex);
+    auto orderId = this->nextOrderId++;
+    this->queue_for_orders.push(orderId);
 
-    cout << "order: ";
-    for (auto &product: products) {
-        cout << product << " ";
+    if (debug) {
+        cout << "order: ";
+        for (auto &product: products) {
+            cout << product << " ";
+        }
+        cout << endl;
     }
-    cout << endl;
 
-    this->queue_to_restaurant.wait(lock, [this]() { return this->occupiedWorkers < this->numberOfWorkers; });
+    this->wait_to_restaurant.wait(lock, [this, orderId]() {
+        return this->occupiedWorkers < this->numberOfWorkers && queue_for_orders.top() == orderId;
+    });
+    queue_for_orders.pop();
+
+    if (debug) cout << "order: " << orderId << " got worker" << endl;
 
     if (this->running) {
         for (auto &product: products) {
             if (std::find(this->menu.begin(), this->menu.end(), product) == this->menu.end()) {
-                cout << "order: " << product << " -> bad order" << endl;
+                if (debug) cout << "order: " << product << " -> bad order" << endl;
                 throw BadOrderException();
             }
         }
 
-        auto orderId = this->nextOrderId++;
+        //auto orderId = this->nextOrderId++;
         this->orders.insert({orderId, products});
+        this->pendingOrders.push_back(orderId);
         this->ordersQueue.push(orderId);
         auto pager = std::make_unique<CoasterPager>();
-        auto copy = pager.get();
-        this->pagers.insert({orderId, copy});
+        //auto copy = pager.get();
+        this->pagers.insert({orderId, pager->vars});
         this->queue_for_workers.notify_one();
 
-        cout << "order: " << orderId << " ";
-        for (auto &product: products) {
-            cout << product << " ";
+        if (debug) {
+            cout << "order: " << orderId << " ";
+            for (auto &product: products) {
+                cout << product << " ";
+            }
+            cout << "-> pager" << endl;
         }
-        cout << "-> pager: " << this->pagers[orderId]->getId() << endl;
 
         return pager;
     } else {
-        cout << "order: -> restaurant closed" << endl;
+        if (debug) cout << "order: -> restaurant closed" << endl;
         throw RestaurantClosedException();
     }
 }
@@ -161,22 +178,26 @@ std::vector<std::unique_ptr<Product>> System::collectOrder(std::unique_ptr<Coast
     auto it = std::find(this->abandonedOrdersId.begin(), this->abandonedOrdersId.end(), orderId);
 
     if (this->pagers.find(orderId) == this->pagers.end()) {
-        cout << "collectOrder: " << orderId << " -> pager: " << CoasterPager->getId() << " -> exception: BadPagerException" << endl;
+        if (debug) cout << "collectOrder: " << orderId << " -> pager: " << CoasterPager->getId() << " -> exception: BadPagerException" << endl;
         throw BadPagerException();
-    } else if (!this->pagers[orderId]->isReady()) {
-        cout << "collectOrder: " << orderId << " -> pager: " << CoasterPager->getId() << " -> exception: OrderNotReadyException" << endl;
+    } else if (!this->pagers[orderId]->ready) {
+        if (debug) cout << "collectOrder: " << orderId << " -> pager: " << CoasterPager->getId() << " -> exception: OrderNotReadyException" << endl;
         throw OrderNotReadyException();
     } else if (this->pagers[orderId]->failed) {
-        cout << "collectOrder: " << orderId << " -> pager: " << CoasterPager->getId() << " -> exception: FulfillmentFailure" << endl;
+        if (debug) cout << "collectOrder: " << orderId << " -> pager: " << CoasterPager->getId() << " -> exception: FulfillmentFailure" << endl;
         throw FulfillmentFailure();
     } else if (it != this->abandonedOrdersId.end()) {
-        cout << "collectOrder: " << orderId << " -> pager: " << CoasterPager->getId() << " -> exception: OrderExpiredException" << endl;
+        if (debug) cout << "collectOrder: " << orderId << " -> pager: " << CoasterPager->getId() << " -> exception: OrderExpiredException" << endl;
         throw OrderExpiredException();
     }
 
     this->orderCollected[orderId] = true;
     auto res = std::move(this->ordersMade[orderId]);
-    cout << "collectOrder: " << orderId << " -> pager: " << CoasterPager->getId() << " -> collecting" << endl;
+    if (debug) cout << "collectOrder: " << orderId << " -> pager: " << CoasterPager->getId() << " -> collecting" << endl;
+    auto orderIt = std::find(this->pendingOrders.begin(), this->pendingOrders.end(), orderId);
+    if (orderIt != this->pendingOrders.end()) {
+        this->pendingOrders.erase(orderIt);
+    }
     this->queue_for_pagers[orderId].notify_one();
 
     lock.unlock();
@@ -197,7 +218,7 @@ void System::worker() {
     std::unique_lock<std::mutex> lock(this->mutex);
     this->workersStarted++;
     unsigned int id = this->workersStarted;
-    cout << "worker(" << id << "/" << this->numberOfWorkers << "): started" << endl;
+    if (debug) cout << "worker(" << id << "/" << this->numberOfWorkers << "): started" << endl;
 
     if (this->workersStarted == this->numberOfWorkers) {
         this->all_workers_started.notify_one();
@@ -212,7 +233,7 @@ void System::worker() {
         });
 
         if (!this->running && this->ordersQueue.empty()) {
-            cout << "worker(" << id << "): creating report" << endl;
+            if (debug) cout << "worker(" << id << "): creating report" << endl;
             WorkerReport report = {collectedOrders, abandonedOrders, failedOrders, failedProducts};
             this->reports.push_back(report);
 
@@ -222,14 +243,14 @@ void System::worker() {
             lock.unlock();
             return;
         } else {
-            cout << "worker(" << id << "): got order" << endl;
+            if (debug) cout << "worker(" << id << "): got order" << endl;
         }
 
         auto orderId = this->ordersQueue.front();
         auto order = this->orders[orderId];
         this->ordersQueue.pop();
         this->occupiedWorkers++;
-        cout << "worker(" << id << "): order: " << orderId << "\n";
+        if (debug) cout << "worker(" << id << "): order: " << orderId << "\n";
         lock.unlock();
 
         std::vector<std::unique_ptr<Product>> products;
@@ -243,13 +264,17 @@ void System::worker() {
                 failedOrders.push_back(order);
 
                 lock.lock();
-                cout << "worker(" << id << "): order: " << orderId << " failed for " << product << endl;
+                if (debug) cout << "worker(" << id << "): order: " << orderId << " failed for " << product << endl;
                 this->pagers[orderId]->failed = true;
                 // notify the pager - or maybe later?
                 this->pagers[orderId]->cond.notify_one();
 
                 this->orders.erase(orderId);
-                this->pagers.erase(orderId);
+                auto orderIt = std::find(this->pendingOrders.begin(), this->pendingOrders.end(), orderId);
+                if (orderIt != this->pendingOrders.end()) {
+                    this->pendingOrders.erase(orderIt);
+                }
+                //this->pagers.erase(orderId);
                 auto it = std::find(this->menu.begin(), this->menu.end(), product);
                 if (it != this->menu.end()) {
                     this->menu.erase(it);
@@ -276,7 +301,7 @@ void System::worker() {
             this->orderCollected.insert({orderId, false});
             this->ordersMade.insert({orderId, std::move(products)});
             this->pagers[orderId]->ready = true;
-            cout << "worker(" << id << "): order: " << orderId << " ready to be collected" << endl;
+            if (debug) cout << "worker(" << id << "): order: " << orderId << " ready to be collected" << endl;
             this->pagers[orderId]->cond.notify_one();
 
             this->queue_for_pagers[orderId].wait_for(lock, std::chrono::milliseconds(this->clientTimeout), [this, orderId]() {
@@ -285,7 +310,7 @@ void System::worker() {
 
 
             if (!this->orderCollected[orderId]) {
-                cout << "worker(" << id << "): order: " << orderId << " expired" << endl;
+                if (debug) cout << "worker(" << id << "): order: " << orderId << " expired" << endl;
                 abandonedOrders.push_back(order);
                 this->abandonedOrdersId.push_back(orderId);
                 products = std::move(this->ordersMade[orderId]);
@@ -301,20 +326,20 @@ void System::worker() {
                     }
                 }
             } else {
-                cout << "worker(" << id << "): order: " << orderId << " collected" << endl;
+                if (debug) cout << "worker(" << id << "): order: " << orderId << " collected" << endl;
                 collectedOrders.push_back(order);
             }
 
             this->orderCollected.erase(orderId);
-            this->pagers.erase(orderId);
+            //this->pagers.erase(orderId);
             this->orders.erase(orderId);
         } else {
-            cout << "worker(" << id << "): order: " << orderId << " failed" << endl;
+            if (debug) cout << "worker(" << id << "): order: " << orderId << " failed" << endl;
             // eventually notify the pager
         }
         this->occupiedWorkers--;
-        this->queue_to_restaurant.notify_one();
-        cout << "worker(" << id << "): order: " << orderId << " finished" << endl;
+        this->wait_to_restaurant.notify_all();
+        if (debug) cout << "worker(" << id << "): order: " << orderId << " finished" << endl;
         lock.unlock();
     }
 }
