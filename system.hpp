@@ -44,7 +44,7 @@ struct WorkerReport
 };
 
 struct Pager_variables {
-    unsigned int id;
+    unsigned int id = 0;
     std::mutex waiter;
     std::condition_variable cond;
     bool ready = false;
@@ -109,13 +109,19 @@ private:
 
     bool running;
 
-    std::priority_queue<unsigned int, std::vector<unsigned int>, std::greater<>> queue_for_orders;
+    template <typename T>
+    using pq = std::priority_queue<T, std::vector<T>, std::greater<>>;
+    pq<unsigned int> queue_for_orders;
+    std::map<std::string, pq<unsigned int>> queues_for_machines;
+    std::map<std::string, bool> machine_used;
 
     mutable std::mutex mutex;
     std::condition_variable wait_to_restaurant;
     std::condition_variable queue_for_workers;
     std::map<unsigned int, std::condition_variable> queue_for_pagers;
     std::map<std::string, std::shared_ptr<std::mutex>> mutex_for_machines;
+    std::map<std::string, std::shared_ptr<std::mutex>> mutex_for_returns;
+    std::map<std::string, std::condition_variable> wait_for_machines;
     std::condition_variable queue_for_reports;
     std::condition_variable all_workers_started;
 
