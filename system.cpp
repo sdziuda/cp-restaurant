@@ -225,7 +225,6 @@ void System::worker() {
 
     std::unique_lock<std::mutex> lock(this->mutex);
     this->workersStarted++;
-    unsigned int id = this->workersStarted;
 
     if (this->workersStarted == this->numberOfWorkers) {
         this->all_workers_started.notify_one();
@@ -272,7 +271,6 @@ void System::worker() {
             product_futures.push_back(std::move(future));
             failed_futures.push_back(std::move(failed_future));
         }
-        //lock.unlock();
 
         std::vector<std::pair<std::string, std::unique_ptr<Product>>> products = {};
         unsigned int it = 0;
