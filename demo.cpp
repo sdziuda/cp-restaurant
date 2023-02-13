@@ -93,7 +93,7 @@ public:
         cond.wait(lock, [this](){ return !queue.empty(); });
         wcount--;
         auto product = std::move(queue.front());
-        queue.pop_back();
+        queue.pop_front();
         return product;
     }
 
