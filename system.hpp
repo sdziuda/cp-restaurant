@@ -99,24 +99,21 @@ private:
     std::unordered_map<unsigned int, std::vector<std::unique_ptr<Product>>> ordersMade;
     std::unordered_map<unsigned int, bool> orderCollected;
     std::vector<unsigned int> abandonedOrdersId;
-    std::queue<unsigned int> ordersQueue;
     unsigned int nextOrderId;
 
     std::vector<std::thread> workers;
     std::vector<WorkerReport> reports;
     unsigned int workersStarted;
-    unsigned int occupiedWorkers;
 
     bool running;
 
     template <typename T>
     using pq = std::priority_queue<T, std::vector<T>, std::greater<>>;
-    pq<unsigned int> queue_for_orders;
+    pq<unsigned int> ordersQueue;
     std::map<std::string, pq<unsigned int>> queues_for_machines;
     std::map<std::string, bool> machine_used;
 
     mutable std::mutex mutex;
-    std::condition_variable wait_to_restaurant;
     std::condition_variable queue_for_workers;
     std::map<unsigned int, std::condition_variable> queue_for_pagers;
     std::map<std::string, std::shared_ptr<std::mutex>> mutex_for_machines;
